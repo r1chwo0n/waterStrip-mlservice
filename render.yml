@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: waterStrip-mlservice
-    env: python
-    pythonVersion: 3.10.12
-    buildCommand: pip install -r requirements.txt
-    startCommand: python predict_service.py
