@@ -1,6 +1,6 @@
 flask
 numpy
 pillow
-tensorflow==2.12.0
+tensorflow
 scikit-learn
 opencv-python-headless
