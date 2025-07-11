@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS 
 import base64
 import numpy as np
 from PIL import Image
@@ -7,25 +8,20 @@ import cv2
 import os
 import uuid
 from joblib import load
+import requests 
 
 # Load model
 model = load("ph_model.joblib")
 
 app = Flask(__name__)
+CORS(app, origins=["https://water-strip-frontend.vercel.app/", "http://localhost:5173"])
 
 # สร้างโฟลเดอร์ outputs หากยังไม่มี
 os.makedirs("outputs", exist_ok=True)
 
 # ----------- ตัดแถบสีจากภาพ -----------
-def process_image(image_b64):
-    if "," in image_b64:
-        image_b64 = image_b64.split(",")[1]
-    image_data = base64.b64decode(image_b64)
-    image_array = np.frombuffer(image_data, dtype=np.uint8)
-    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-
-    if image is None:
-        raise ValueError("ไม่สามารถโหลดภาพได้")
+def process_image_from_file(image_path):
+    image = cv2.imread(image_path)
 
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     lower_yellow_tip = np.array([20, 80, 80])
@@ -102,23 +98,40 @@ def index():
 def predict():
     try:
         data = request.get_json()
-        image_b64 = data.get("image")
-        if not image_b64:
-            return jsonify({"error": "No image provided"}), 400
+        image_url = data.get("image")
 
-        # ตัดแถบสีออกจากภาพ base64
-        cropped_path = process_image(image_b64)
+        if not image_url or not image_url.startswith("http"):
+            return jsonify({"error": "Only valid image URL is supported"}), 400
 
-        # แปลงภาพครอปเป็นฟีเจอร์
+        # โหลดภาพจาก URL (Cloudinary)
+        response = requests.get(image_url)
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to fetch image from URL"}), 400
+
+        # แปลงเป็นภาพ OpenCV
+        image_data = response.content
+        image_array = np.frombuffer(image_data, dtype=np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        if image is None:
+            return jsonify({"error": "Cannot decode image"}), 400
+
+        # เซฟเป็น temp file
+        temp_path = os.path.join("outputs", f"input_{uuid.uuid4().hex}.jpg")
+        cv2.imwrite(temp_path, image)
+
+        # ตัดแถบสี
+        cropped_path = process_image_from_file(temp_path)
+
+        # สร้างฟีเจอร์
         features = extract_features_from_file(cropped_path)
 
-        # ทำนาย pH
+        # ทำนาย
         prediction = model.predict([features])[0]
         final_prediction = max(0, min(14, round(prediction, 2)))
 
         return jsonify({
             "prediction": final_prediction,
-            "cropped_path": cropped_path
+            "cropped_path": cropped_path  # Optional
         })
 
     except Exception as e:
